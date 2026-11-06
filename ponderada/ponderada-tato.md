@@ -181,9 +181,9 @@ As três versões estão em [`codigo`](codigo). Rodei cada uma três vezes com 2
 
 | Versão | Execução | Consumidas | Perdidas | Duplicadas | Travou? |
 |---|---:|---:|---:|---:|---|
-| 1 - sem sincronização | 1 | 17.664 | 2.336 | 0 | Sim |
-| 1 - sem sincronização | 2 | 17.614 | 2.386 | 0 | Sim |
-| 1 - sem sincronização | 3 | 17.586 | 2.414 | 0 | Sim |
+| 1 - sem sincronização | 1 | 17.672 | 2.328 | 0 | Sim |
+| 1 - sem sincronização | 2 | 17.619 | 2.381 | 0 | Sim |
+| 1 - sem sincronização | 3 | 17.327 | 2.673 | 0 | Sim |
 | 2 - semáforos | 1 | 20.000 | 0 | 0 | Não |
 | 2 - semáforos | 2 | 20.000 | 0 | 0 | Não |
 | 2 - semáforos | 3 | 20.000 | 0 | 0 | Não |
@@ -193,11 +193,11 @@ As três versões estão em [`codigo`](codigo). Rodei cada uma três vezes com 2
 
 ### Prints das execuções
 
-![Três execuções da versão 1](img/execucao-versao1.png)
+![Execução da versão 1](img/execucao-versao1.png)
 
-![Três execuções da versão 2](img/execucao-versao2.png)
+![Execução da versão 2](img/execucao-versao2.png)
 
-![Três execuções da versão 3](img/execucao-versao3.png)
+![Execução da versão 3](img/execucao-versao3.png)
 
 ### Análise
 
