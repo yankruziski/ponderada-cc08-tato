@@ -1,158 +1,108 @@
-"""Versão 1: produtor/consumidor com espera ocupada e sem sincronização.
+# Arquivo: versao1.py
+# Descrição: buffer circular sem sincronização. Esta versão foi feita para
+# mostrar a condição de corrida entre a thread do sensor e a do motor.
 
-O programa força uma troca de contexto entre a leitura e a escrita do contador
-compartilhado para tornar a condição de corrida observável.
-"""
-
-from __future__ import annotations
-
-import argparse
 import threading
 import time
-from collections import Counter
-from dataclasses import dataclass
 
 
-TOTAL_PADRAO = 20_000
-N_PADRAO = 6
-TIMEOUT = 1.0
+N = 6
+TOTAL_AMOSTRAS = 20_000
+LIMITE_ESPERA = 1.0
 
 
-@dataclass
-class Resultado:
-    """Armazena as métricas finais de uma execução.
-
-    Attributes:
-        consumidas: Quantidade total de leituras válidas feitas pelo consumidor.
-        perdidas: Amostras esperadas que não apareceram nenhuma vez.
-        duplicadas: Leituras extras de números que já haviam sido consumidos.
-        travou: Indica se o consumidor ficou um segundo sem receber uma amostra.
-    """
-
-    consumidas: int
-    perdidas: int
-    duplicadas: int
-    travou: bool
+def calcular_resultado(recebidas, travou):
+    """Recebe a lista consumida e o estado de trava; retorna as quatro métricas."""
+    diferentes = set(recebidas)
+    perdidas = TOTAL_AMOSTRAS - len(diferentes)
+    duplicadas = len(recebidas) - len(diferentes)
+    return len(recebidas), perdidas, duplicadas, travou
 
 
-def executar(total: int, tamanho: int) -> Resultado:
-    """Executa a versão sem sincronização.
-
-    Args:
-        total: Número de amostras que o produtor deve gerar.
-        tamanho: Número de posições do buffer circular.
-
-    Returns:
-        Métricas calculadas a partir da sequência recebida pelo consumidor.
-    """
-
-    buffer: list[int | None] = [None] * tamanho
-    entrada = 0
-    saida = 0
+def executar():
+    """Sem parâmetros; roda as threads sem proteção e retorna as quatro métricas."""
+    buffer = [None] * N
+    posicao_entrada = 0
+    posicao_saida = 0
     ocupadas = 0
-    produtor_terminou = False
+    recebidas = []
     parar = threading.Event()
-    recebidas: list[int] = []
     travou = False
 
-    def produtor() -> None:
-        """Gera amostras e altera o contador sem exclusão mútua."""
+    def produtor():
+        """Produz as amostras de 0 até 19.999 e tenta colocá-las no buffer."""
+        nonlocal posicao_entrada, ocupadas
 
-        nonlocal entrada, ocupadas, produtor_terminou
-        for amostra in range(total):
-            while ocupadas >= tamanho and not parar.is_set():
+        for amostra in range(TOTAL_AMOSTRAS):
+            # Espera ocupada: o produtor consulta o contador até surgir uma
+            # posição. Não há semáforo nem lock nesta versão.
+            while ocupadas >= N and not parar.is_set():
                 time.sleep(0)
+
             if parar.is_set():
-                break
+                return
 
-            buffer[entrada] = amostra
-            entrada = (entrada + 1) % tamanho
+            buffer[posicao_entrada] = amostra
+            posicao_entrada = (posicao_entrada + 1) % N
 
-            valor_lido = ocupadas
+            # Esta é uma parte da região crítica. Se o consumidor rodar depois
+            # da leitura e antes da escrita, uma das atualizações será perdida.
+            valor_atual = ocupadas
             time.sleep(0)
-            ocupadas = valor_lido + 1
+            ocupadas = valor_atual + 1
 
-        produtor_terminou = True
-
-    def consumidor() -> None:
-        """Retira amostras e encerra após um segundo sem progresso."""
-
-        nonlocal saida, ocupadas, travou
+    def consumidor():
+        """Consome amostras e para se ficar um segundo sem receber nada."""
+        nonlocal posicao_saida, ocupadas, travou
         ultimo_recebimento = time.monotonic()
 
-        while len(recebidas) < total and not parar.is_set():
+        while len(recebidas) < TOTAL_AMOSTRAS and not parar.is_set():
             if ocupadas <= 0:
-                if time.monotonic() - ultimo_recebimento >= TIMEOUT:
+                if time.monotonic() - ultimo_recebimento >= LIMITE_ESPERA:
                     travou = True
                     parar.set()
-                    break
+                    return
                 time.sleep(0)
                 continue
 
-            amostra = buffer[saida]
-            buffer[saida] = None
-            saida = (saida + 1) % tamanho
+            amostra = buffer[posicao_saida]
+            buffer[posicao_saida] = None
+            posicao_saida = (posicao_saida + 1) % N
 
-            valor_lido = ocupadas
+            # O sleep(0) força a troca de thread no pior ponto possível.
+            valor_atual = ocupadas
             time.sleep(0)
-            ocupadas = valor_lido - 1
+            ocupadas = valor_atual - 1
 
             if amostra is not None:
                 recebidas.append(amostra)
                 ultimo_recebimento = time.monotonic()
 
-            if produtor_terminou and ocupadas <= 0 and len(recebidas) < total:
-                # Ainda aguardamos até o timeout: o contador pode ter sido
-                # corrompido por uma atualização perdida.
-                time.sleep(0)
+    sensor = threading.Thread(target=produtor)
+    motor = threading.Thread(target=consumidor)
+    sensor.start()
+    motor.start()
+    sensor.join(timeout=10)
+    motor.join(timeout=10)
 
-    thread_produtor = threading.Thread(target=produtor, name="sensor")
-    thread_consumidor = threading.Thread(target=consumidor, name="motor")
-    thread_produtor.start()
-    thread_consumidor.start()
-    thread_produtor.join(timeout=10)
-    thread_consumidor.join(timeout=10)
-
-    if thread_produtor.is_alive() or thread_consumidor.is_alive():
+    # É uma segunda segurança para o programa não ficar aberto para sempre.
+    if sensor.is_alive() or motor.is_alive():
         travou = True
         parar.set()
-        thread_produtor.join(timeout=2)
-        thread_consumidor.join(timeout=2)
+        sensor.join(timeout=1)
+        motor.join(timeout=1)
 
-    contagens = Counter(recebidas)
-    unicas_validas = sum(1 for valor in range(total) if contagens[valor] > 0)
-    duplicadas = sum(max(0, quantidade - 1) for quantidade in contagens.values())
-    return Resultado(
-        consumidas=len(recebidas),
-        perdidas=total - unicas_validas,
-        duplicadas=duplicadas,
-        travou=travou,
-    )
+    return calcular_resultado(recebidas, travou)
 
 
-def ler_argumentos() -> argparse.Namespace:
-    """Lê os parâmetros da linha de comando.
-
-    Returns:
-        Namespace com a quantidade de amostras e o tamanho do buffer.
-    """
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amostras", type=int, default=TOTAL_PADRAO)
-    parser.add_argument("--buffer", type=int, default=N_PADRAO)
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Executa o experimento e imprime uma linha fácil de comparar."""
-
-    args = ler_argumentos()
-    resultado = executar(args.amostras, args.buffer)
+def main():
+    """Executa o teste e mostra o resultado no terminal."""
+    consumidas, perdidas, duplicadas, travou = executar()
     print("Versão 1 - sem sincronização")
-    print(f"Amostras previstas: {args.amostras} | Buffer: {args.buffer}")
+    print(f"Amostras previstas: {TOTAL_AMOSTRAS} | Buffer: {N}")
     print(
-        f"Consumidas: {resultado.consumidas} | Perdidas: {resultado.perdidas} | "
-        f"Duplicadas: {resultado.duplicadas} | Travou: {'sim' if resultado.travou else 'não'}"
+        f"Consumidas: {consumidas} | Perdidas: {perdidas} | "
+        f"Duplicadas: {duplicadas} | Travou: {'sim' if travou else 'não'}"
     )
 
 

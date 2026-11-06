@@ -1,110 +1,89 @@
-"""Versão 2: buffer circular protegido pelos três semáforos pedidos."""
+# Arquivo: versao2.py
+# Descrição: solução do produtor/consumidor usando os semáforos vazio, cheio
+# e mutex para proteger um buffer circular de seis posições.
 
-from __future__ import annotations
-
-import argparse
 import threading
-from collections import Counter
-from dataclasses import dataclass
 
 
-TOTAL_PADRAO = 20_000
-N_PADRAO = 6
+N = 6
+TOTAL_AMOSTRAS = 20_000
 
 
-@dataclass
-class Resultado:
-    """Armazena as métricas finais de uma execução sincronizada."""
-
-    consumidas: int
-    perdidas: int
-    duplicadas: int
-    travou: bool
+def calcular_resultado(recebidas, travou):
+    """Recebe a lista consumida e o estado de trava; retorna as quatro métricas."""
+    diferentes = set(recebidas)
+    perdidas = TOTAL_AMOSTRAS - len(diferentes)
+    duplicadas = len(recebidas) - len(diferentes)
+    return len(recebidas), perdidas, duplicadas, travou
 
 
-def executar(total: int, tamanho: int) -> Resultado:
-    """Executa produtor e consumidor com vazio, cheio e mutex.
+def executar():
+    """Sem parâmetros; roda as threads com semáforos e retorna as quatro métricas."""
+    buffer = [None] * N
+    posicao_entrada = 0
+    posicao_saida = 0
+    recebidas = []
 
-    Args:
-        total: Número de amostras produzidas.
-        tamanho: Capacidade do buffer circular.
-
-    Returns:
-        Métricas da sequência recebida pelo consumidor.
-    """
-
-    buffer: list[int | None] = [None] * tamanho
-    entrada = 0
-    saida = 0
-    recebidas: list[int] = []
-    vazio = threading.Semaphore(tamanho)
+    # vazio conta quantas posições ainda podem ser usadas.
+    # cheio conta quantas posições já têm uma amostra pronta.
+    # mutex permite que apenas uma thread mexa no buffer de cada vez.
+    vazio = threading.Semaphore(N)
     cheio = threading.Semaphore(0)
     mutex = threading.Semaphore(1)
 
-    def produtor() -> None:
-        """Insere todas as amostras, esperando espaço antes do mutex."""
+    def produtor():
+        """Produz 20.000 amostras, esperando uma posição livre para cada uma."""
+        nonlocal posicao_entrada
 
-        nonlocal entrada
-        for amostra in range(total):
+        for amostra in range(TOTAL_AMOSTRAS):
             vazio.acquire()
             mutex.acquire()
-            buffer[entrada] = amostra
-            entrada = (entrada + 1) % tamanho
+
+            # Começo da região crítica do produtor.
+            buffer[posicao_entrada] = amostra
+            posicao_entrada = (posicao_entrada + 1) % N
+            # Fim da região crítica.
+
             mutex.release()
             cheio.release()
 
-    def consumidor() -> None:
-        """Retira exatamente o total de amostras produzido."""
+    def consumidor():
+        """Retira do buffer a mesma quantidade de amostras produzida."""
+        nonlocal posicao_saida
 
-        nonlocal saida
-        for _ in range(total):
+        for _ in range(TOTAL_AMOSTRAS):
             cheio.acquire()
             mutex.acquire()
-            amostra = buffer[saida]
-            buffer[saida] = None
-            saida = (saida + 1) % tamanho
+
+            # Começo da região crítica do consumidor.
+            amostra = buffer[posicao_saida]
+            buffer[posicao_saida] = None
+            posicao_saida = (posicao_saida + 1) % N
+            # Fim da região crítica.
+
             mutex.release()
             vazio.release()
-            if amostra is not None:
-                recebidas.append(amostra)
+            recebidas.append(amostra)
 
-    thread_produtor = threading.Thread(target=produtor, name="sensor")
-    thread_consumidor = threading.Thread(target=consumidor, name="motor")
-    thread_produtor.start()
-    thread_consumidor.start()
-    thread_produtor.join(timeout=10)
-    thread_consumidor.join(timeout=10)
-    travou = thread_produtor.is_alive() or thread_consumidor.is_alive()
+    sensor = threading.Thread(target=produtor)
+    motor = threading.Thread(target=consumidor)
+    sensor.start()
+    motor.start()
+    sensor.join(timeout=10)
+    motor.join(timeout=10)
 
-    contagens = Counter(recebidas)
-    unicas_validas = sum(1 for valor in range(total) if contagens[valor] > 0)
-    duplicadas = sum(max(0, quantidade - 1) for quantidade in contagens.values())
-    return Resultado(len(recebidas), total - unicas_validas, duplicadas, travou)
+    travou = sensor.is_alive() or motor.is_alive()
+    return calcular_resultado(recebidas, travou)
 
 
-def ler_argumentos() -> argparse.Namespace:
-    """Lê total de amostras e capacidade do buffer.
-
-    Returns:
-        Namespace contendo os argumentos validados pelo argparse.
-    """
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amostras", type=int, default=TOTAL_PADRAO)
-    parser.add_argument("--buffer", type=int, default=N_PADRAO)
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Executa a versão correta e imprime suas métricas."""
-
-    args = ler_argumentos()
-    resultado = executar(args.amostras, args.buffer)
+def main():
+    """Executa o teste e mostra o resultado no terminal."""
+    consumidas, perdidas, duplicadas, travou = executar()
     print("Versão 2 - três semáforos")
-    print(f"Amostras previstas: {args.amostras} | Buffer: {args.buffer}")
+    print(f"Amostras previstas: {TOTAL_AMOSTRAS} | Buffer: {N}")
     print(
-        f"Consumidas: {resultado.consumidas} | Perdidas: {resultado.perdidas} | "
-        f"Duplicadas: {resultado.duplicadas} | Travou: {'sim' if resultado.travou else 'não'}"
+        f"Consumidas: {consumidas} | Perdidas: {perdidas} | "
+        f"Duplicadas: {duplicadas} | Travou: {'sim' if travou else 'não'}"
     )
 
 

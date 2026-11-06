@@ -1,134 +1,91 @@
-"""Versão 3: ordem incorreta, com mutex adquirido antes de vazio.
+# Arquivo: versao3.py
+# Descrição: mesma ideia da versão 2, mas o produtor pega o mutex antes de
+# esperar por uma posição vazia. A troca de ordem provoca o deadlock.
 
-Um pequeno atraso na partida do consumidor permite que o produtor encha o
-buffer. Na amostra seguinte ele segura mutex enquanto espera vazio; o
-consumidor segura cheio e espera mutex, expondo o deadlock.
-"""
-
-from __future__ import annotations
-
-import argparse
 import threading
 import time
-from collections import Counter
-from dataclasses import dataclass
 
 
-TOTAL_PADRAO = 20_000
-N_PADRAO = 6
-TIMEOUT = 1.0
+N = 6
+TOTAL_AMOSTRAS = 20_000
+TEMPO_DO_WATCHDOG = 1.0
 
 
-@dataclass
-class Resultado:
-    """Armazena as métricas e o diagnóstico de travamento."""
-
-    consumidas: int
-    perdidas: int
-    duplicadas: int
-    travou: bool
+def calcular_resultado(recebidas, travou):
+    """Recebe a lista consumida e o estado de trava; retorna as quatro métricas."""
+    diferentes = set(recebidas)
+    perdidas = TOTAL_AMOSTRAS - len(diferentes)
+    duplicadas = len(recebidas) - len(diferentes)
+    return len(recebidas), perdidas, duplicadas, travou
 
 
-def executar(total: int, tamanho: int) -> Resultado:
-    """Executa a ordem de aquisição capaz de produzir deadlock.
+def executar():
+    """Sem parâmetros; executa a ordem errada e retorna o estado após o watchdog."""
+    buffer = [None] * N
+    posicao_entrada = 0
+    posicao_saida = 0
+    recebidas = []
 
-    Args:
-        total: Número planejado de amostras.
-        tamanho: Capacidade do buffer circular.
-
-    Returns:
-        Métricas observadas até a detecção do travamento.
-    """
-
-    buffer: list[int | None] = [None] * tamanho
-    entrada = 0
-    saida = 0
-    recebidas: list[int] = []
-    vazio = threading.Semaphore(tamanho)
+    vazio = threading.Semaphore(N)
     cheio = threading.Semaphore(0)
     mutex = threading.Semaphore(1)
-    parar = threading.Event()
-    deadlock_detectado = threading.Event()
 
-    def produtor() -> None:
-        """Adquire mutex antes de vazio, que é a ordem propositalmente errada."""
+    def produtor():
+        """Produz as amostras adquirindo mutex antes de vazio de propósito."""
+        nonlocal posicao_entrada
 
-        nonlocal entrada
-        for amostra in range(total):
-            if parar.is_set():
-                break
+        for amostra in range(TOTAL_AMOSTRAS):
+            # Aqui está a única mudança em relação à versão 2.
+            # Quando o buffer enche, o produtor continua segurando o mutex
+            # enquanto espera uma vaga que somente o consumidor pode liberar.
             mutex.acquire()
-            if not vazio.acquire(timeout=TIMEOUT):
-                deadlock_detectado.set()
-                parar.set()
-                mutex.release()
-                break
-            buffer[entrada] = amostra
-            entrada = (entrada + 1) % tamanho
+            vazio.acquire()
+
+            buffer[posicao_entrada] = amostra
+            posicao_entrada = (posicao_entrada + 1) % N
+
             mutex.release()
             cheio.release()
 
-    def consumidor() -> None:
-        """Consome dados até terminar ou até o watchdog detectar o ciclo."""
+    def consumidor():
+        """Tenta consumir normalmente, mas fica esperando o mutex do produtor."""
+        nonlocal posicao_saida
 
-        nonlocal saida
-        while len(recebidas) < total and not parar.is_set():
-            if not cheio.acquire(timeout=TIMEOUT):
-                deadlock_detectado.set()
-                parar.set()
-                break
-            if not mutex.acquire(timeout=TIMEOUT):
-                deadlock_detectado.set()
-                parar.set()
-                cheio.release()
-                break
-            amostra = buffer[saida]
-            buffer[saida] = None
-            saida = (saida + 1) % tamanho
+        for _ in range(TOTAL_AMOSTRAS):
+            cheio.acquire()
+            mutex.acquire()
+
+            amostra = buffer[posicao_saida]
+            buffer[posicao_saida] = None
+            posicao_saida = (posicao_saida + 1) % N
+
             mutex.release()
             vazio.release()
-            if amostra is not None:
-                recebidas.append(amostra)
+            recebidas.append(amostra)
 
-    thread_produtor = threading.Thread(target=produtor, name="sensor")
-    thread_consumidor = threading.Thread(target=consumidor, name="motor")
-    thread_produtor.start()
+    # As threads são daemon para o programa conseguir encerrar depois que o
+    # watchdog comprovar o deadlock. Sem isso, o Python ficaria aberto esperando.
+    sensor = threading.Thread(target=produtor, daemon=True)
+    motor = threading.Thread(target=consumidor, daemon=True)
+    sensor.start()
+
+    # Dá tempo para o sensor encher as seis posições antes do motor começar.
     time.sleep(0.02)
-    thread_consumidor.start()
-    thread_produtor.join(timeout=3)
-    thread_consumidor.join(timeout=3)
+    motor.start()
 
-    travou = deadlock_detectado.is_set() or thread_produtor.is_alive() or thread_consumidor.is_alive()
-    parar.set()
-    contagens = Counter(recebidas)
-    unicas_validas = sum(1 for valor in range(total) if contagens[valor] > 0)
-    duplicadas = sum(max(0, quantidade - 1) for quantidade in contagens.values())
-    return Resultado(len(recebidas), total - unicas_validas, duplicadas, travou)
+    time.sleep(TEMPO_DO_WATCHDOG)
+    travou = sensor.is_alive() and motor.is_alive()
+    return calcular_resultado(recebidas, travou)
 
 
-def ler_argumentos() -> argparse.Namespace:
-    """Lê os parâmetros da execução.
-
-    Returns:
-        Namespace com número de amostras e tamanho do buffer.
-    """
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--amostras", type=int, default=TOTAL_PADRAO)
-    parser.add_argument("--buffer", type=int, default=N_PADRAO)
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Executa a versão com ordem trocada e mostra o resultado."""
-
-    args = ler_argumentos()
-    resultado = executar(args.amostras, args.buffer)
+def main():
+    """Executa o teste e mostra o resultado no terminal."""
+    consumidas, perdidas, duplicadas, travou = executar()
     print("Versão 3 - ordem mutex -> vazio")
-    print(f"Amostras previstas: {args.amostras} | Buffer: {args.buffer}")
+    print(f"Amostras previstas: {TOTAL_AMOSTRAS} | Buffer: {N}")
     print(
-        f"Consumidas: {resultado.consumidas} | Perdidas: {resultado.perdidas} | "
-        f"Duplicadas: {resultado.duplicadas} | Travou: {'sim' if resultado.travou else 'não'}"
+        f"Consumidas: {consumidas} | Perdidas: {perdidas} | "
+        f"Duplicadas: {duplicadas} | Travou: {'sim' if travou else 'não'}"
     )
 
 

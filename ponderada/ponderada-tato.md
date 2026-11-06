@@ -181,15 +181,15 @@ As três versões estão em [`codigo`](codigo). Rodei cada uma três vezes com 2
 
 | Versão | Execução | Consumidas | Perdidas | Duplicadas | Travou? |
 |---|---:|---:|---:|---:|---|
-| 1 - sem sincronização | 1 | 17.391 | 2.609 | 0 | Sim |
-| 1 - sem sincronização | 2 | 17.353 | 2.647 | 0 | Sim |
-| 1 - sem sincronização | 3 | 17.717 | 2.283 | 0 | Sim |
+| 1 - sem sincronização | 1 | 17.664 | 2.336 | 0 | Sim |
+| 1 - sem sincronização | 2 | 17.614 | 2.386 | 0 | Sim |
+| 1 - sem sincronização | 3 | 17.586 | 2.414 | 0 | Sim |
 | 2 - semáforos | 1 | 20.000 | 0 | 0 | Não |
 | 2 - semáforos | 2 | 20.000 | 0 | 0 | Não |
 | 2 - semáforos | 3 | 20.000 | 0 | 0 | Não |
-| 3 - ordem trocada | 1 | 1 | 19.999 | 0 | Sim |
-| 3 - ordem trocada | 2 | 1 | 19.999 | 0 | Sim |
-| 3 - ordem trocada | 3 | 1 | 19.999 | 0 | Sim |
+| 3 - ordem trocada | 1 | 0 | 20.000 | 0 | Sim |
+| 3 - ordem trocada | 2 | 0 | 20.000 | 0 | Sim |
+| 3 - ordem trocada | 3 | 0 | 20.000 | 0 | Sim |
 
 ### Prints das execuções
 
