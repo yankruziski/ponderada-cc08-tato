@@ -1,0 +1,10 @@
+# Materiais de contexto e arquivos da atividade não fazem parte da entrega.
+*.pdf
+/contexto/
+/materiais/
+/Notes_*
+
+# Arquivos gerados localmente pelo Python e pelo sistema operacional.
+__pycache__/
+*.py[cod]
+.DS_Store
